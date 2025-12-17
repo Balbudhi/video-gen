@@ -14,3 +14,5 @@ image-gen/semanticist/wandb/
 # Large archives
 *.tar.gz
 *.zip
+image-gen/semanticist/.DS_Store
+image-gen/semanticist/diff-*.txt

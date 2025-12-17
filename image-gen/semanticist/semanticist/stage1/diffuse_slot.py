@@ -9,6 +9,7 @@ from semanticist.stage1.diffusion import create_diffusion
 from semanticist.stage1.diffusion_transfomer import DiT
 from timm.data import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
+
 class DiT_with_autoenc_cond(DiT):
     def __init__(
         self,
@@ -25,11 +26,11 @@ class DiT_with_autoenc_cond(DiT):
         self.autoenc_dim = autoenc_dim
         self.hidden_size = kwargs["hidden_size"]
         self.null_cond = nn.Parameter(torch.zeros(1, num_autoenc, autoenc_dim))
-        torch.nn.init.normal_(self.null_cond, std=.02)
+        torch.nn.init.normal_(self.null_cond, std=0.02)
         self.autoenc_cond_embedder = nn.Linear(autoenc_dim, self.hidden_size)
         self.y_embedder = nn.Identity()
         self.cond_drop_prob = 0.1
-        
+
         self.use_repa = use_repa
         self._repa_hook = None
         self.encoder_depth = encoder_depth
@@ -54,7 +55,9 @@ class DiT_with_autoenc_cond(DiT):
         else:
             # randomly drop some conditions according to the drop_mask (N, K)
             # True means keep
-            autoenc_cond_drop = torch.where(drop_mask[:, :, None], autoenc_cond, self.null_cond)
+            autoenc_cond_drop = torch.where(
+                drop_mask[:, :, None], autoenc_cond, self.null_cond
+            )
         return self.autoenc_cond_embedder(autoenc_cond_drop)
 
     def forward(self, x, t, autoenc_cond, drop_mask=None):
@@ -91,11 +94,12 @@ class DiT_with_autoenc_cond(DiT):
         half = x[: len(x) // 2]
         combined = torch.cat([half, half], dim=0)
         model_out = self.forward(combined, t, autoenc_cond, drop_mask)
-        eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
+        eps, rest = model_out[:, : self.in_channels], model_out[:, self.in_channels :]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)
         return torch.cat([eps, rest], dim=1)
+
 
 #################################################################################
 #                                   DiT Configs                                  #
@@ -189,6 +193,7 @@ DiT_with_autoenc_cond_models = {
     "DiT-S-8": DiT_with_autoenc_cond_S_8,
 }
 
+
 class NestedSampler(nn.Module):
     """
     Returns a boolean prefix keep-mask of shape (B, K).
@@ -197,14 +202,15 @@ class NestedSampler(nn.Module):
     mode="bimodal": emphasizes head anchors (e.g., 1/2/4/8) and full K=128,
                     with occasional intermediate tail lengths.
     """
+
     def __init__(
         self,
         num_slots: int,
         mode: str = "uniform",
         head_anchors=(1, 2, 4, 8),
         head_cutoff: int = 8,
-        p_full: float = 0.50,   # P(k = K)
-        p_head: float = 0.40,   # P(k in head_anchors)
+        p_full: float = 0.50,  # P(k = K)
+        p_head: float = 0.40,  # P(k in head_anchors)
     ):
         super().__init__()
         self.num_slots = int(num_slots)
@@ -224,13 +230,19 @@ class NestedSampler(nn.Module):
         if self.mode not in ("uniform", "bimodal"):
             raise ValueError(f"Unknown mode: {self.mode}")
 
-        if not (0.0 <= self.p_full <= 1.0 and 0.0 <= self.p_head <= 1.0 and (self.p_full + self.p_head) <= 1.0):
+        if not (
+            0.0 <= self.p_full <= 1.0
+            and 0.0 <= self.p_head <= 1.0
+            and (self.p_full + self.p_head) <= 1.0
+        ):
             raise ValueError("Need 0<=p_full,p_head and p_full+p_head<=1")
 
         if self.mode == "bimodal":
             if self.head_cutoff >= self.num_slots:
                 raise ValueError("head_cutoff must be < num_slots")
-            if torch.any(self.head_anchors < 1) or torch.any(self.head_anchors > self.head_cutoff):
+            if torch.any(self.head_anchors < 1) or torch.any(
+                self.head_anchors > self.head_cutoff
+            ):
                 raise ValueError("head_anchors must be in [1..head_cutoff]")
 
     def sample_k(self, batch_size: int, device: torch.device) -> torch.Tensor:
@@ -256,7 +268,9 @@ class NestedSampler(nn.Module):
         # 4. Assign k for "Head" regime
         if head.any():
             # Randomly select one of the anchors (1, 2, 4, 8)
-            idx = torch.randint(0, self.head_anchors.numel(), (int(head.sum().item()),), device=device)
+            idx = torch.randint(
+                0, self.head_anchors.numel(), (int(head.sum().item()),), device=device
+            )
             k[head] = self.head_anchors[idx]
 
         # 5. Assign k for "Tail" regime
@@ -264,7 +278,7 @@ class NestedSampler(nn.Module):
             # Sample uniformly from the remaining range (head_cutoff + 1 to N - 1)
             # Note: We exclude N because that is covered by 'full'
             low = self.head_cutoff + 1
-            high = self.num_slots  
+            high = self.num_slots
             k[tail] = torch.randint(low, high, (int(tail.sum().item()),), device=device)
 
         return k
@@ -274,7 +288,9 @@ class NestedSampler(nn.Module):
             k = self.sample_k(batch_size, device)
         else:
             # During validation (without specific override), use full context
-            k = torch.full((batch_size,), self.num_slots, dtype=torch.int64, device=device)
+            k = torch.full(
+                (batch_size,), self.num_slots, dtype=torch.int64, device=device
+            )
 
         # Allow manual override for inference visualization (e.g., forcing k=8 to check quality)
         if inference_with_n_slots != -1:
@@ -289,6 +305,7 @@ class NestedSampler(nn.Module):
         # Shape: (batch_size, num_slots)
         return self.arange[None, :] < k[:, None]
 
+
 class DiffuseSlot(nn.Module):
     def __init__(
         self,
@@ -301,7 +318,6 @@ class DiffuseSlot(nn.Module):
         norm_slots=False,
         enable_nest=False,
         enable_nest_after=-1,
-        
         # --- NEW: Phase 1 Sampler Configuration ---
         nest_mode="uniform",
         nest_head_anchors=(1, 2, 4, 8),
@@ -309,7 +325,6 @@ class DiffuseSlot(nn.Module):
         nest_p_full=0.50,
         nest_p_head=0.40,
         # ------------------------------------------
-        
         vae="stabilityai/sd-vae-ft-ema",
         dit_model="DiT-B-4",
         num_sampling_steps="ddim25",
@@ -323,7 +338,9 @@ class DiffuseSlot(nn.Module):
         self.use_repa = use_repa
         self.repa_loss_weight = repa_loss_weight
         if use_repa:
-            self.repa_encoder = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14')
+            self.repa_encoder = torch.hub.load(
+                "facebookresearch/dinov2", "dinov2_vitb14"
+            )
             self.repa_encoder.image_size = 224
             for param in self.repa_encoder.parameters():
                 param.requires_grad = False
@@ -331,7 +348,9 @@ class DiffuseSlot(nn.Module):
 
         self.diffusion = create_diffusion(timestep_respacing="")
         self.gen_diffusion = create_diffusion(timestep_respacing=num_sampling_steps)
-        self.dit_input_size = enc_img_size // 8 if not "mar" in vae else enc_img_size // 16
+        self.dit_input_size = (
+            enc_img_size // 8 if not "mar" in vae else enc_img_size // 16
+        )
         self.dit_in_channels = 4 if not "mar" in vae else 16
         self.dit = DiT_with_autoenc_cond_models[dit_model](
             input_size=self.dit_input_size,
@@ -358,9 +377,9 @@ class DiffuseSlot(nn.Module):
         self.num_slots = num_slots
         self.norm_slots = norm_slots
         self.num_channels = self.encoder.num_features
-        
+
         self.encoder2slot = nn.Linear(self.num_channels, slot_dim)
-        
+
         # --- MODIFIED: Instantiate Bimodal Sampler ---
         self.nested_sampler = NestedSampler(
             num_slots,
@@ -371,56 +390,81 @@ class DiffuseSlot(nn.Module):
             p_head=nest_p_head,
         )
         # ---------------------------------------------
-        
+
         self.enable_nest = enable_nest
         self.enable_nest_after = enable_nest_after
 
     @torch.no_grad()
     def vae_encode(self, x):
         x = x * 2 - 1
+
+        p = next(self.vae.parameters())
+        x = x.to(device=p.device, dtype=p.dtype)
+
         x = self.vae.encode(x)
-        if hasattr(x, 'latent_dist'):
+        if hasattr(x, "latent_dist"):
             x = x.latent_dist
         return x.sample().mul_(self.scaling_factor)
 
     @torch.no_grad()
     def vae_decode(self, z):
+        p = next(self.vae.parameters())
+        z = z.to(device=p.device, dtype=p.dtype)
+
         z = self.vae.decode(z / self.scaling_factor)
-        if hasattr(z, 'sample'):
+        if hasattr(z, "sample"):
             z = z.sample
         return (z + 1) / 2
 
     @torch.no_grad()
     def repa_encode(self, x):
-        mean = torch.Tensor(IMAGENET_DEFAULT_MEAN).to(x.device).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-        std = torch.Tensor(IMAGENET_DEFAULT_STD).to(x.device).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+        mean = (
+            torch.Tensor(IMAGENET_DEFAULT_MEAN)
+            .to(x.device)
+            .unsqueeze(0)
+            .unsqueeze(-1)
+            .unsqueeze(-1)
+        )
+        std = (
+            torch.Tensor(IMAGENET_DEFAULT_STD)
+            .to(x.device)
+            .unsqueeze(0)
+            .unsqueeze(-1)
+            .unsqueeze(-1)
+        )
         x = (x - mean) / std
         if self.repa_encoder.image_size != self.enc_img_size:
-            x = torch.nn.functional.interpolate(x, self.repa_encoder.image_size, mode='bicubic')
-        x = self.repa_encoder.forward_features(x)['x_norm_patchtokens']
+            x = torch.nn.functional.interpolate(
+                x, self.repa_encoder.image_size, mode="bicubic"
+            )
+        x = self.repa_encoder.forward_features(x)["x_norm_patchtokens"]
         return x
 
     def encode_slots(self, x):
+        p = next(self.encoder.parameters())
+        x = x.to(device=p.device, dtype=p.dtype)
         slots = self.encoder(x, is_causal=self.enc_causal)
         slots = self.encoder2slot(slots)
         if self.norm_slots:
             slots_std = torch.std(slots, dim=-1, keepdim=True)
             slots_mean = torch.mean(slots, dim=-1, keepdim=True)
-            slots = (slots - slots_mean) / slots_std
+            slots = (slots - slots_mean) / (slots_std + 1e-6)
         return slots
-    
-    def forward_with_latents(self,
-                             x_vae,
-                             slots,
-                             z,
-                             sample=False,
-                             epoch=None,
-                             inference_with_n_slots=-1, 
-                             cfg=1.0):
+
+    def forward_with_latents(
+        self,
+        x_vae,
+        slots,
+        z,
+        sample=False,
+        epoch=None,
+        inference_with_n_slots=-1,
+        cfg=1.0,
+    ):
         losses = {}
         batch_size = x_vae.shape[0]
         device = x_vae.device
-        
+
         if (
             epoch is not None
             and epoch >= self.enable_nest_after
@@ -432,12 +476,13 @@ class DiffuseSlot(nn.Module):
 
         if self.enable_nest or inference_with_n_slots != -1:
             drop_mask = self.nested_sampler(
-                batch_size, device, 
-                inference_with_n_slots=inference_with_n_slots, 
+                batch_size,
+                device,
+                inference_with_n_slots=inference_with_n_slots,
             )
         else:
             drop_mask = None
-            
+
         if sample:
             return self.sample(slots, drop_mask=drop_mask, cfg=cfg)
 
@@ -445,40 +490,40 @@ class DiffuseSlot(nn.Module):
         loss_dict = self.diffusion.training_losses(self.dit, x_vae, t, model_kwargs)
         diff_loss = loss_dict["loss"].mean()
         losses["diff_loss"] = diff_loss
-        
+
         if self.use_repa:
             assert self.dit._repa_hook is not None and z is not None
             z_tilde = self.dit._repa_hook
-            
+
             if z_tilde.shape[1] != z.shape[1]:
                 z_tilde = interpolate_features(z_tilde, z.shape[1])
-            
+
             z_tilde = F.normalize(z_tilde, dim=-1)
             z = F.normalize(z, dim=-1)
             repa_loss = -torch.sum(z_tilde * z, dim=-1)
             losses["repa_loss"] = repa_loss.mean() * self.repa_loss_weight
-        
+
         return losses
-        
 
-    def forward(self, 
-                x,
-                sample=False,
-                epoch=None,
-                inference_with_n_slots=-1,
-                cfg=1.0):
-
+    def forward(self, x, sample=False, epoch=None, inference_with_n_slots=-1, cfg=1.0):
         x_vae = self.vae_encode(x)
         z = self.repa_encode(x) if self.use_repa else None
         slots = self.encode_slots(x)
-        return self.forward_with_latents(x_vae, slots, z, sample, epoch, inference_with_n_slots, cfg)
-
+        return self.forward_with_latents(
+            x_vae, slots, z, sample, epoch, inference_with_n_slots, cfg
+        )
 
     @torch.no_grad()
     def sample(self, slots, drop_mask=None, cfg=1.0):
         batch_size = slots.shape[0]
         device = slots.device
-        z = torch.randn(batch_size, self.dit_in_channels, self.dit_input_size, self.dit_input_size, device=device)
+        z = torch.randn(
+            batch_size,
+            self.dit_in_channels,
+            self.dit_input_size,
+            self.dit_input_size,
+            device=device,
+        )
         if cfg != 1.0:
             z = torch.cat([z, z], 0)
             null_slots = self.dit.null_cond.expand(batch_size, -1, -1)
@@ -514,12 +559,13 @@ class DiffuseSlot(nn.Module):
 
 def build_mlp(hidden_size, projector_dim, z_dim):
     return nn.Sequential(
-                nn.Linear(hidden_size, projector_dim),
-                nn.SiLU(),
-                nn.Linear(projector_dim, projector_dim),
-                nn.SiLU(),
-                nn.Linear(projector_dim, z_dim),
-            )
+        nn.Linear(hidden_size, projector_dim),
+        nn.SiLU(),
+        nn.Linear(projector_dim, projector_dim),
+        nn.SiLU(),
+        nn.Linear(projector_dim, z_dim),
+    )
+
 
 def interpolate_features(x, target_len):
     """Interpolate features to match target sequence length.
@@ -532,12 +578,12 @@ def interpolate_features(x, target_len):
     B, T1, D = x.shape
     H1 = W1 = int(math.sqrt(T1))
     H2 = W2 = int(math.sqrt(target_len))
-    
+
     # Reshape to 2D spatial dimensions and move channels to second dimension
     x = x.reshape(B, H1, W1, D).permute(0, 3, 1, 2)
-    
+
     # Interpolate
-    x = F.interpolate(x, size=(H2, W2), mode='bicubic', align_corners=False)
-    
+    x = F.interpolate(x, size=(H2, W2), mode="bicubic", align_corners=False)
+
     # Reshape back to sequence
     return x.permute(0, 2, 3, 1).reshape(B, target_len, D)

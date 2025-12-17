@@ -11,17 +11,17 @@ trainer:
     max_grad_norm: 1.0
 
     # Mac-Optimized Data Loading
-    batch_size: 4
-    grad_accum_steps: 32
-    num_workers: 0          # Critical for stability on macOS
+    batch_size: 8
+    grad_accum_steps: 16
+    num_workers: 4          # Critical for stability on macOS
     pin_memory: False       # False because MPS uses Unified Memory
 
     # Precision Strategy
-    precision: "bf16"       # Fallback to "no" if M1/OS incompatibility arises
+    precision: "no"
 
     enable_ema: True
     save_every: 1000
-    sample_every: 200       # Frequent sampling for qualitative validation
+    sample_every: 2000       # Frequent sampling for qualitative validation
 
     eval_fid: False
     fid_every: 999999999    # Disable FID calc (too slow locally)

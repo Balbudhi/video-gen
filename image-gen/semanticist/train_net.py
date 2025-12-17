@@ -1,13 +1,20 @@
 import os.path as osp
 import argparse
+import warnings
 from omegaconf import OmegaConf
 from semanticist.engine.trainer_utils import instantiate_from_config
 from semanticist.utils.device_utils import configure_compute_backend
 
+warnings.filterwarnings(
+    "ignore",
+    message=r"User provided device_type of 'cuda', but CUDA is not available. Disabling",
+)
+
+
 def train():
     configure_compute_backend()
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, default='configs/vit_vqgan.yaml')
+    parser.add_argument("--cfg", type=str, default="configs/vit_vqgan.yaml")
     args = parser.parse_args()
 
     cfg_file = args.cfg
@@ -16,6 +23,6 @@ def train():
     trainer = instantiate_from_config(config.trainer)
     trainer.train(args.cfg)
 
-if __name__ == '__main__':
 
+if __name__ == "__main__":
     train()

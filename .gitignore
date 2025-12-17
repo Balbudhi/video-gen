@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Datasets (do not commit)
+image-gen/datasets/
+
+# Training outputs (do not commit)
+image-gen/semanticist/output/
+image-gen/semanticist/lightning_logs/
+image-gen/semanticist/wandb/
+
+# Large archives
+*.tar.gz
+*.zip

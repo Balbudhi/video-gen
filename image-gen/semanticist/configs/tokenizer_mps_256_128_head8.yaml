@@ -1,0 +1,83 @@
+trainer:
+  target: semanticist.engine.diffusion_trainer.DiffusionTrainer
+  params:
+    num_epoch: 50
+    valid_size: 64
+
+    # Learning Rate and Optimizer
+    blr: 2.5e-5
+    cosine_lr: True
+    warmup_epochs: 5
+    max_grad_norm: 1.0
+
+    # Mac-Optimized Data Loading
+    batch_size: 4
+    grad_accum_steps: 32
+    num_workers: 0          # Critical for stability on macOS
+    pin_memory: False       # False because MPS uses Unified Memory
+
+    # Precision Strategy
+    precision: "bf16"       # Fallback to "no" if M1/OS incompatibility arises
+
+    enable_ema: True
+    save_every: 1000
+    sample_every: 200       # Frequent sampling for qualitative validation
+
+    eval_fid: False
+    fid_every: 999999999    # Disable FID calc (too slow locally)
+
+    test_num_slots: 8
+    cfg: 3.0
+    compile: False          # torch.compile is currently unstable on MPS
+
+    result_folder: "./output/tokenizer_mps256_128_head8"
+    log_dir: "./output/tokenizer_mps256_128_head8/logs"
+
+    model:
+      target: semanticist.stage1.diffuse_slot.DiffuseSlot
+      params:
+        eval_fid: False
+        encoder: "vit_base_patch16"
+        enc_img_size: 256
+        enc_causal: True
+
+        num_slots: 128
+        slot_dim: 32
+        norm_slots: True
+
+        # DiT Architecture: Small variant for MPS throughput
+        dit_model: "DiT-S-4"
+        num_sampling_steps: "ddim25"
+
+        vae: "xwen99/mar-vae-kl16"
+
+        enable_nest: True
+        enable_nest_after: -1
+
+        # --- Phase 1: Bimodal Sampler Config ---
+        nest_mode: "bimodal"
+        nest_head_cutoff: 8
+        nest_head_anchors: [1, 2, 4, 8]
+        nest_p_full: 0.50
+        nest_p_head: 0.40
+        # ---------------------------------------
+
+        use_repa: False     # Disable REPA to save VRAM/Compute
+        ckpt_path: null
+
+    dataset:
+      target: semanticist.utils.datasets.ImageNet
+      params:
+        root: ../datasets/pets256
+        split: train
+        aug: randcrop
+        img_size: 256
+
+    test_dataset:
+      target: semanticist.utils.datasets.ImageNet
+      params:
+        root: ../datasets/pets256
+        split: val
+        aug: centercrop
+        img_size: 256
+

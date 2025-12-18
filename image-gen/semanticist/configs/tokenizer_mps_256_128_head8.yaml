@@ -13,11 +13,11 @@ trainer:
     # Mac-Optimized Data Loading
     batch_size: 8
     grad_accum_steps: 16
-    num_workers: 4          # Critical for stability on macOS
+    num_workers: 4          
     pin_memory: False       # False because MPS uses Unified Memory
 
     # Precision Strategy
-    precision: "no"
+    precision: "bf16"
 
     enable_ema: True
     save_every: 1000
@@ -60,6 +60,8 @@ trainer:
         nest_head_anchors: [1, 2, 4, 8]
         nest_p_full: 0.50
         nest_p_head: 0.40
+        nest_p_head_late: 0.7
+        nest_p_head_late_start_epoch: 10
         # ---------------------------------------
 
         use_repa: False     # Disable REPA to save VRAM/Compute

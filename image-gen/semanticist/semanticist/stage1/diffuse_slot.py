@@ -209,18 +209,21 @@ class NestedSampler(nn.Module):
         mode: str = "uniform",
         head_anchors=(1, 2, 4, 8),
         head_cutoff: int = 8,
-        p_full: float = 0.50,  # P(k = K)
-        p_head: float = 0.40,  # P(k in head_anchors)
+        p_full: float = 0.50,
+        p_head: float = 0.40,
+        p_head_late=None,
+        p_head_late_start_epoch: int = 10,
     ):
         super().__init__()
         self.num_slots = int(num_slots)
-        # Register arange as a buffer so it moves to the correct device (MPS/CUDA) automatically
         self.register_buffer("arange", torch.arange(self.num_slots, dtype=torch.int64))
 
         self.mode = mode
         self.head_cutoff = int(head_cutoff)
         self.p_full = float(p_full)
         self.p_head = float(p_head)
+        self.p_head_late = None if p_head_late is None else float(p_head_late)
+        self.p_head_late_start_epoch = int(p_head_late_start_epoch)
 
         # Convert tuple to tensor for efficient indexing
         anchors = torch.tensor(list(head_anchors), dtype=torch.int64)
@@ -245,7 +248,9 @@ class NestedSampler(nn.Module):
             ):
                 raise ValueError("head_anchors must be in [1..head_cutoff]")
 
-    def sample_k(self, batch_size: int, device: torch.device) -> torch.Tensor:
+    def sample_k(
+        self, batch_size: int, device: torch.device, epoch=None
+    ) -> torch.Tensor:
         """
         Samples the integer lengths 'k' for the batch.
         """
@@ -253,13 +258,19 @@ class NestedSampler(nn.Module):
             return torch.randint(1, self.num_slots + 1, (batch_size,), device=device)
 
         # Bimodal Sampling Logic
-        # 1. Generate random probabilities for the batch
         r = torch.rand(batch_size, device=device)
         k = torch.empty(batch_size, dtype=torch.int64, device=device)
 
-        # 2. Define masks for the three regimes based on cumulative probability
+        p_head = self.p_head
+        if (
+            epoch is not None
+            and self.p_head_late is not None
+            and epoch >= self.p_head_late_start_epoch
+        ):
+            p_head = self.p_head_late
+
         full = r < self.p_full
-        head = (~full) & (r < (self.p_full + self.p_head))
+        head = (~full) & (r < (self.p_full + p_head))
         tail = ~(full | head)
 
         # 3. Assign k for "Full" regime
@@ -283,11 +294,10 @@ class NestedSampler(nn.Module):
 
         return k
 
-    def forward(self, batch_size, device, inference_with_n_slots=-1):
+    def forward(self, batch_size, device, inference_with_n_slots=-1, epoch=None):
         if self.training:
-            k = self.sample_k(batch_size, device)
+            k = self.sample_k(batch_size, device, epoch=epoch)
         else:
-            # During validation (without specific override), use full context
             k = torch.full(
                 (batch_size,), self.num_slots, dtype=torch.int64, device=device
             )
@@ -318,13 +328,13 @@ class DiffuseSlot(nn.Module):
         norm_slots=False,
         enable_nest=False,
         enable_nest_after=-1,
-        # --- NEW: Phase 1 Sampler Configuration ---
         nest_mode="uniform",
         nest_head_anchors=(1, 2, 4, 8),
         nest_head_cutoff=8,
         nest_p_full=0.50,
         nest_p_head=0.40,
-        # ------------------------------------------
+        nest_p_head_late=None,
+        nest_p_head_late_start_epoch=10,
         vae="stabilityai/sd-vae-ft-ema",
         dit_model="DiT-B-4",
         num_sampling_steps="ddim25",
@@ -347,6 +357,7 @@ class DiffuseSlot(nn.Module):
             self.repa_encoder.eval()
 
         self.diffusion = create_diffusion(timestep_respacing="")
+        self.num_sampling_steps = num_sampling_steps
         self.gen_diffusion = create_diffusion(timestep_respacing=num_sampling_steps)
         self.dit_input_size = (
             enc_img_size // 8 if not "mar" in vae else enc_img_size // 16
@@ -380,7 +391,6 @@ class DiffuseSlot(nn.Module):
 
         self.encoder2slot = nn.Linear(self.num_channels, slot_dim)
 
-        # --- MODIFIED: Instantiate Bimodal Sampler ---
         self.nested_sampler = NestedSampler(
             num_slots,
             mode=nest_mode,
@@ -388,11 +398,22 @@ class DiffuseSlot(nn.Module):
             head_cutoff=nest_head_cutoff,
             p_full=nest_p_full,
             p_head=nest_p_head,
+            p_head_late=nest_p_head_late,
+            p_head_late_start_epoch=nest_p_head_late_start_epoch,
         )
-        # ---------------------------------------------
 
         self.enable_nest = enable_nest
         self.enable_nest_after = enable_nest_after
+
+        self.prefix_loss_p = float(kwargs.pop("prefix_loss_p", 0.3))
+        self.prefix_loss_lambda = float(kwargs.pop("prefix_loss_lambda", 0.1))
+        self.prefix_loss_start_epoch = int(kwargs.pop("prefix_loss_start_epoch", 0))
+        prefix_ks = kwargs.pop("prefix_loss_ks", (1, 2, 4, 8))
+        self.register_buffer(
+            "prefix_loss_ks",
+            torch.tensor(list(prefix_ks), dtype=torch.int64),
+            persistent=False,
+        )
 
     @torch.no_grad()
     def vae_encode(self, x):
@@ -479,6 +500,7 @@ class DiffuseSlot(nn.Module):
                 batch_size,
                 device,
                 inference_with_n_slots=inference_with_n_slots,
+                epoch=epoch,
             )
         else:
             drop_mask = None
@@ -490,6 +512,27 @@ class DiffuseSlot(nn.Module):
         loss_dict = self.diffusion.training_losses(self.dit, x_vae, t, model_kwargs)
         diff_loss = loss_dict["loss"].mean()
         losses["diff_loss"] = diff_loss
+
+        if (
+            self.training
+            and self.prefix_loss_p > 0.0
+            and (epoch is None or epoch >= self.prefix_loss_start_epoch)
+            and torch.rand((), device=device) < self.prefix_loss_p
+        ):
+            k = int(
+                self.prefix_loss_ks[
+                    torch.randint(0, self.prefix_loss_ks.numel(), (1,), device=device)
+                ].item()
+            )
+            prefix_mask = (
+                torch.arange(self.num_slots, device=device)[None, :] < k
+            ).expand(batch_size, -1)
+            prefix_kwargs = dict(autoenc_cond=slots, drop_mask=prefix_mask)
+            prefix_loss_dict = self.diffusion.training_losses(
+                self.dit, x_vae, t, prefix_kwargs
+            )
+            prefix_loss = prefix_loss_dict["loss"].mean()
+            losses["prefix_loss"] = prefix_loss * self.prefix_loss_lambda
 
         if self.use_repa:
             assert self.dit._repa_hook is not None and z is not None
@@ -536,17 +579,33 @@ class DiffuseSlot(nn.Module):
         else:
             model_kwargs = dict(autoenc_cond=slots, drop_mask=drop_mask)
             sample_fn = self.dit.forward
-        samples = self.gen_diffusion.p_sample_loop(
-            sample_fn,
-            z.shape,
-            z,
-            clip_denoised=False,
-            model_kwargs=model_kwargs,
-            progress=False,
-            device=device,
-        )
+
+        use_ddim = isinstance(
+            self.num_sampling_steps, str
+        ) and self.num_sampling_steps.startswith("ddim")
+        if use_ddim:
+            samples = self.gen_diffusion.ddim_sample_loop(
+                sample_fn,
+                z.shape,
+                noise=z,
+                clip_denoised=False,
+                model_kwargs=model_kwargs,
+                progress=False,
+                device=device,
+                eta=0.0,
+            )
+        else:
+            samples = self.gen_diffusion.p_sample_loop(
+                sample_fn,
+                z.shape,
+                z,
+                clip_denoised=False,
+                model_kwargs=model_kwargs,
+                progress=False,
+                device=device,
+            )
         if cfg != 1.0:
-            samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+            samples, _ = samples.chunk(2, dim=0)
         samples = self.vae_decode(samples)
         return samples
 

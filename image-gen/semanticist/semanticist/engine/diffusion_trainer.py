@@ -65,9 +65,22 @@ class DiffusionTrainer:
         compile=False,
     ):
         kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
+
+        self.requested_precision = str(precision).lower()
+        if self.requested_precision in ("bf16", "bfloat16"):
+            self.autocast_dtype = torch.bfloat16
+        elif self.requested_precision in ("fp16", "float16", "16"):
+            self.autocast_dtype = torch.float16
+        else:
+            self.autocast_dtype = None
+
+        accel_precision = self.requested_precision
+        if torch.backends.mps.is_available() and not torch.cuda.is_available():
+            accel_precision = "no"
+
         self.accelerator = Accelerator(
             kwargs_handlers=[kwargs],
-            mixed_precision=precision,
+            mixed_precision=accel_precision,
             gradient_accumulation_steps=grad_accum_steps,
             log_with="tensorboard",
             project_dir=log_dir,
@@ -150,15 +163,17 @@ class DiffusionTrainer:
                 self.model,
                 weight_decay=0.05,
                 learning_rate=lr,
-            )  # accelerator=self.accelerator)
+            )
 
+            import math
+            steps_per_epoch = math.ceil(len(self.train_dl) / grad_accum_steps)
             if warmup_epochs is not None:
-                warmup_steps = warmup_epochs * len(self.train_dl)
+                warmup_steps = warmup_epochs * steps_per_epoch
 
             self.g_sched = create_scheduler(
                 self.g_optim,
                 num_epoch,
-                len(self.train_dl),
+                steps_per_epoch,
                 lr_min,
                 warmup_steps,
                 warmup_lr_init,
@@ -182,6 +197,7 @@ class DiffusionTrainer:
             )
 
         self.steps = 0
+        self.optim_steps = 0
         self.loaded_steps = -1
 
         if compile:
@@ -235,11 +251,11 @@ class DiffusionTrainer:
         return self.accelerator.device
 
     def _autocast_ctx(self):
+        if self.autocast_dtype is None:
+            return nullcontext()
         dev = self.device.type
-        if dev == "mps":
-            return torch.autocast(device_type="mps", dtype=torch.bfloat16)
-        if dev == "cuda":
-            return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if dev in ("mps", "cuda"):
+            return torch.autocast(device_type=dev, dtype=self.autocast_dtype)
         return nullcontext()
 
     def _load_checkpoint(self, ckpt_path=None):
@@ -349,8 +365,10 @@ class DiffusionTrainer:
                             self.model.parameters(), self.max_grad_norm
                         )
                     self.g_optim.step()
-                    if self.g_sched is not None:
-                        self.g_sched.step_update(self.steps)
+                    if self.accelerator.sync_gradients:
+                        self.optim_steps += 1
+                        if self.g_sched is not None:
+                            self.g_sched.step_update(self.optim_steps)
                     self.g_optim.zero_grad()
 
                 self.accelerator.wait_for_everyone()
@@ -410,38 +428,18 @@ class DiffusionTrainer:
                     else:
                         img = batch
 
-                    with self._autocast_ctx():
-                        rec = self.model(
-                            img,
-                            sample=True,
-                            inference_with_n_slots=self.test_num_slots,
-                            cfg=1.0,
-                        )
-                    imgs_and_recs = torch.stack((img.to(rec.device), rec), dim=0)
-                    imgs_and_recs = rearrange(imgs_and_recs, "r b ... -> (b r) ...")
-                    imgs_and_recs = imgs_and_recs.detach().cpu().float()
+                    slot_counts = [self.test_num_slots]
+                    if self.test_num_slots != self.num_slots:
+                        slot_counts.append(self.num_slots)
 
-                    grid = make_grid(
-                        imgs_and_recs, nrow=6, normalize=True, value_range=(0, 1)
-                    )
-                    if self.accelerator.is_main_process:
-                        save_image(
-                            grid,
-                            os.path.join(
-                                self.image_saved_dir,
-                                f"step_{self.steps}_slots{self.test_num_slots}_{batch_i}.jpg",
-                            ),
-                        )
-
-                    if self.cfg != 1.0:
+                    for n_slots in slot_counts:
                         with self._autocast_ctx():
                             rec = self.model(
                                 img,
                                 sample=True,
-                                inference_with_n_slots=self.test_num_slots,
-                                cfg=self.cfg,
+                                inference_with_n_slots=n_slots,
+                                cfg=1.0,
                             )
-
                         imgs_and_recs = torch.stack((img.to(rec.device), rec), dim=0)
                         imgs_and_recs = rearrange(imgs_and_recs, "r b ... -> (b r) ...")
                         imgs_and_recs = imgs_and_recs.detach().cpu().float()
@@ -454,9 +452,41 @@ class DiffusionTrainer:
                                 grid,
                                 os.path.join(
                                     self.image_saved_dir,
-                                    f"step_{self.steps}_cfg_{self.cfg}_slots{self.test_num_slots}_{batch_i}.jpg",
+                                    f"step_{self.steps}_slots{n_slots}_{batch_i}.jpg",
                                 ),
                             )
+
+                        if self.cfg != 1.0:
+                            with self._autocast_ctx():
+                                rec = self.model(
+                                    img,
+                                    sample=True,
+                                    inference_with_n_slots=n_slots,
+                                    cfg=self.cfg,
+                                )
+
+                            imgs_and_recs = torch.stack(
+                                (img.to(rec.device), rec), dim=0
+                            )
+                            imgs_and_recs = rearrange(
+                                imgs_and_recs, "r b ... -> (b r) ..."
+                            )
+                            imgs_and_recs = imgs_and_recs.detach().cpu().float()
+
+                            grid = make_grid(
+                                imgs_and_recs,
+                                nrow=6,
+                                normalize=True,
+                                value_range=(0, 1),
+                            )
+                            if self.accelerator.is_main_process:
+                                save_image(
+                                    grid,
+                                    os.path.join(
+                                        self.image_saved_dir,
+                                        f"step_{self.steps}_cfg_{self.cfg}_slots{n_slots}_{batch_i}.jpg",
+                                    ),
+                                )
         if (self.eval_fid and self.test_dl is not None) and (
             self.test_only or (self.steps % self.fid_every == 0)
         ):

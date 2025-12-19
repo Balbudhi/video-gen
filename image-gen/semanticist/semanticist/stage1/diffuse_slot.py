@@ -335,6 +335,8 @@ class DiffuseSlot(nn.Module):
         nest_p_head=0.40,
         nest_p_head_late=None,
         nest_p_head_late_start_epoch=10,
+        tail_block_norm=False,
+        tail_block_norm_after=50,
         vae="stabilityai/sd-vae-ft-ema",
         dit_model="DiT-B-4",
         num_sampling_steps="ddim25",
@@ -404,6 +406,9 @@ class DiffuseSlot(nn.Module):
 
         self.enable_nest = enable_nest
         self.enable_nest_after = enable_nest_after
+
+        self.tail_block_norm = tail_block_norm
+        self.tail_block_norm_after = int(tail_block_norm_after)
 
         self.prefix_loss_p = float(kwargs.pop("prefix_loss_p", 0.3))
         self.prefix_loss_lambda = float(kwargs.pop("prefix_loss_lambda", 0.1))
@@ -492,6 +497,17 @@ class DiffuseSlot(nn.Module):
             and self.enable_nest_after != -1
         ):
             self.enable_nest = True
+
+        if (
+            self.tail_block_norm
+            and epoch is not None
+            and epoch >= self.tail_block_norm_after
+        ):
+            tail = slots[:, 8:, :]
+            b, t, d = tail.shape
+            tail_flat = tail.reshape(b, -1)
+            tail_flat = tail_flat / (tail_flat.norm(dim=-1, keepdim=True) + 1e-8)
+            slots = torch.cat([slots[:, :8, :], tail_flat.reshape(b, t, d)], dim=1)
 
         t = torch.randint(0, 1000, (x_vae.shape[0],), device=device)
 

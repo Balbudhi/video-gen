@@ -31,8 +31,8 @@ trainer:
     cfg: 1.0
     compile: False          # torch.compile is currently unstable on MPS
 
-    result_folder: "./output/tokenizer_mps256_128_head8_sdv_phase1"
-    log_dir: "./output/tokenizer_mps256_128_head8_sdv_phase1/logs"
+    result_folder: "./output/tokenizer_mps256_128_head8_sdv_phase2"
+    log_dir: "./output/tokenizer_mps256_128_head8_sdv_phase2/logs"
 
     model:
       target: semanticist.stage1.diffuse_slot.DiffuseSlot
@@ -43,7 +43,7 @@ trainer:
         enc_causal: True
 
         num_slots: 128
-        slot_dim: 32
+        slot_dim: 16
         norm_slots: True
 
         # DiT Architecture: Small variant for MPS throughput
@@ -53,23 +53,24 @@ trainer:
         # vae: "xwen99/mar-vae-kl16"
         vae: "stabilityai/sd-vae-ft-ema"
 
-        enable_nest: True
-        enable_nest_after: 0
+        enable_nest: False
+        enable_nest_after: 50
         
         prefix_loss_p: 0.3
         prefix_loss_lambda: 0.10
         prefix_loss_ks: [1, 2, 4, 8]
-        prefix_loss_start_epoch: 5
+        prefix_loss_start_epoch: 50
 
-        # --- Phase 1: Bimodal Sampler Config ---
         nest_mode: "bimodal"
         nest_head_cutoff: 8
         nest_head_anchors: [1, 2, 4, 8]
-        nest_p_head: 0.55
-        nest_p_full: 0.35
-        nest_p_head_late: 0.7
-        nest_p_head_late_start_epoch: 10
-        # ---------------------------------------
+        nest_p_full: 0.30
+        nest_p_head: 0.70
+        nest_p_head_late: null
+        nest_p_head_late_start_epoch: 0
+
+        tail_block_norm: True
+        tail_block_norm_after: 0
 
         use_repa: False     # Disable REPA to save VRAM/Compute
         ckpt_path: null
@@ -77,7 +78,7 @@ trainer:
     dataset:
       target: semanticist.utils.datasets.ImageNet
       params:
-        root: ../datasets/pets256
+        root: ../datasets/looney_tunes256
         split: train
         aug: randcrop
         img_size: 256
@@ -85,7 +86,7 @@ trainer:
     test_dataset:
       target: semanticist.utils.datasets.ImageNet
       params:
-        root: ../datasets/pets256
+        root: ../datasets/looney_tunes256
         split: val
         aug: centercrop
         img_size: 256

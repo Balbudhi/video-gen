@@ -17,3 +17,4 @@ image-gen/semanticist/wandb/
 image-gen/semanticist/.DS_Store
 image-gen/semanticist/diff-*.txt
 image-gen/.DS_Store
+image-gen/semanticist/slurm_logs/*

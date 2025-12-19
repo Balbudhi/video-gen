@@ -29,6 +29,22 @@ from semanticist.engine.trainer_utils import (
 from contextlib import nullcontext
 
 
+# -------------------------------------------------------------------------
+# Accelerate unwrap_model() + torch.compile bug workaround
+#
+# Accelerate can raise KeyError('_orig_mod') when some submodules are compiled
+# but the top-level model is not. Avoid unwrap_model() entirely and unwrap
+# safely ourselves.
+# -------------------------------------------------------------------------
+def _safe_base_model(m):
+    """Safely unwrap DDP/DataParallel and torch.compile wrappers."""
+    # DDP / DataParallel
+    m = getattr(m, "module", m)
+    # torch.compile wrapper (if present). Use getattr not __dict__ indexing.
+    m = getattr(m, "_orig_mod", m)
+    return m
+
+
 class _LenCycle:
     """Cycle over a fixed list of batches but pretend to have a finite length (for logger)."""
 
@@ -220,7 +236,8 @@ class DiffusionTrainer:
         self.loaded_steps = -1
 
         if compile:
-            _model = self.accelerator.unwrap_model(self.model)
+            # Avoid accelerator.unwrap_model() (can crash with torch.compile + accelerate)
+            _model = _safe_base_model(self.model)
             _model.vae = torch.compile(_model.vae, mode="reduce-overhead")
             _model.dit = torch.compile(_model.dit, mode="reduce-overhead")
             # _model.encoder = torch.compile(_model.encoder, mode="reduce-overhead") # nan loss when compiled together with dit, no idea why
@@ -232,9 +249,9 @@ class DiffusionTrainer:
         if (
             self.enable_ema and not self.test_only
         ):  # when testing, we directly load the ema dict and skip here
-            self.ema_model = EMAModel(
-                self.accelerator.unwrap_model(self.model), self.device
-            )
+            # Avoid accelerator.unwrap_model() (can crash with torch.compile + accelerate)
+            # At init-time the model is not wrapped by DDP yet
+            self.ema_model = EMAModel(_safe_base_model(self.model), self.device)
             self.accelerator.register_for_checkpointing(self.ema_model)
 
         self._load_checkpoint(model.params.ckpt_path)
@@ -282,7 +299,8 @@ class DiffusionTrainer:
         if ckpt_path is None or not osp.exists(ckpt_path):
             return
 
-        model = self.accelerator.unwrap_model(self.model)
+        # Avoid accelerator.unwrap_model() (can crash with torch.compile + accelerate)
+        model = _safe_base_model(self.model)
 
         if osp.isdir(ckpt_path):
             # ckpt_path is something like 'path/to/models/step10/'
@@ -351,7 +369,8 @@ class DiffusionTrainer:
                     if self.steps >= self.loaded_steps:
                         break
 
-            self.accelerator.unwrap_model(self.model).current_epoch = epoch
+            # Avoid accelerator.unwrap_model() (can crash with torch.compile + accelerate)
+            _safe_base_model(self.model).current_epoch = epoch
             self.model.train()  # Set model to training mode
 
             logger = MetricLogger(delimiter="  ")
@@ -406,7 +425,8 @@ class DiffusionTrainer:
 
                 # update ema with state dict
                 if self.enable_ema:
-                    self.ema_model.update(self.accelerator.unwrap_model(self.model))
+                    # Avoid accelerator.unwrap_model() (can crash with torch.compile + accelerate)
+                    self.ema_model.update(_safe_base_model(self.model))
 
                 for key, value in losses.items():
                     logger.update(**{key: value.item()})

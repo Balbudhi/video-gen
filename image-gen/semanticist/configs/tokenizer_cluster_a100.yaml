@@ -1,39 +1,34 @@
 trainer:
   target: semanticist.engine.diffusion_trainer.DiffusionTrainer
   params:
-    num_epoch: 50
-    valid_size: 64
+    num_epoch: 400
+    valid_size: 1024
 
-    # Learning Rate and Optimizer
     blr: 2.5e-5
     cosine_lr: True
     warmup_epochs: 5
     max_grad_norm: 1.0
 
-    # Mac-Optimized Data Loading
-    batch_size: 32
-    grad_accum_steps: 4
-    num_workers: 0         
-    pin_memory: False       # False because MPS uses Unified Memory
+    batch_size: 64
+    grad_accum_steps: 1
+    num_workers: 8
+    pin_memory: True
 
-    # Precision Strategy
     precision: "bf16"
-
+    compile: True
     enable_ema: True
-    # overfit_batches: 1
-    save_every: 5000
-    sample_every: 200       # Frequent sampling for qualitative validation
+
+    # More frequent images than checkpoints (your preference)
+    sample_every: 4000
+    save_every: 12000
 
     eval_fid: False
-    fid_every: 999999999    # Disable FID calc (too slow locally)
-
+    fid_every: 999999999
     test_num_slots: 8
-    # cfg: 3.0
     cfg: 1.0
-    compile: False          # torch.compile is currently unstable on MPS
 
-    result_folder: "./output/tokenizer_mps256_128_head8_sdv_phase2"
-    log_dir: "./output/tokenizer_mps256_128_head8_sdv_phase2/logs"
+    result_folder: "/home/eeshan/orcd/pool/image_gen_mit_preemptable"
+    log_dir: "/home/eeshan/orcd/pool/image_gen_mit_preemptable/logs"
 
     model:
       target: semanticist.stage1.diffuse_slot.DiffuseSlot
@@ -47,20 +42,13 @@ trainer:
         slot_dim: 16
         norm_slots: True
 
-        # DiT Architecture: Small variant for MPS throughput
         dit_model: "DiT-S-4"
         num_sampling_steps: "250"
 
-        # vae: "xwen99/mar-vae-kl16"
         vae: "stabilityai/sd-vae-ft-ema"
 
         enable_nest: False
-        enable_nest_after: 15
-        
-        prefix_loss_p: 0.3
-        prefix_loss_lambda: 0.10
-        prefix_loss_ks: [1, 2, 4, 8]
-        prefix_loss_start_epoch: 15
+        enable_nest_after: 50
 
         nest_mode: "bimodal"
         nest_head_cutoff: 8
@@ -70,16 +58,21 @@ trainer:
         nest_p_head_late: null
         nest_p_head_late_start_epoch: 0
 
+        prefix_loss_p: 0.30
+        prefix_loss_lambda: 0.10
+        prefix_loss_ks: [1, 2, 4, 8]
+        prefix_loss_start_epoch: 50
+
         tail_block_norm: True
         tail_block_norm_after: 0
 
-        use_repa: False     # Disable REPA to save VRAM/Compute
+        use_repa: False
         ckpt_path: null
 
     dataset:
       target: semanticist.utils.datasets.ImageNet
       params:
-        root: ../datasets/looney_tunes256
+        root: "/home/eeshan/orcd/scratch/looney_tunes256"
         split: train
         aug: randcrop
         img_size: 256
@@ -87,8 +80,7 @@ trainer:
     test_dataset:
       target: semanticist.utils.datasets.ImageNet
       params:
-        root: ../datasets/looney_tunes256
+        root: "/home/eeshan/orcd/scratch/looney_tunes256"
         split: val
         aug: centercrop
         img_size: 256
-

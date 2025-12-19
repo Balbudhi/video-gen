@@ -1,7 +1,7 @@
 trainer:
   target: semanticist.engine.diffusion_trainer.DiffusionTrainer
   params:
-    num_epoch: 50
+    num_epoch: 200
     valid_size: 64
 
     # Learning Rate and Optimizer
@@ -11,8 +11,8 @@ trainer:
     max_grad_norm: 1.0
 
     # Mac-Optimized Data Loading
-    batch_size: 8
-    grad_accum_steps: 16
+    batch_size: 32
+    grad_accum_steps: 4
     num_workers: 4          
     pin_memory: False       # False because MPS uses Unified Memory
 
@@ -27,11 +27,12 @@ trainer:
     fid_every: 999999999    # Disable FID calc (too slow locally)
 
     test_num_slots: 8
-    cfg: 3.0
+    # cfg: 3.0
+    cfg: 1.0
     compile: False          # torch.compile is currently unstable on MPS
 
-    result_folder: "./output/tokenizer_mps256_128_head8"
-    log_dir: "./output/tokenizer_mps256_128_head8/logs"
+    result_folder: "./output/tokenizer_mps256_128_head8_sdv_phase1"
+    log_dir: "./output/tokenizer_mps256_128_head8_sdv_phase1/logs"
 
     model:
       target: semanticist.stage1.diffuse_slot.DiffuseSlot
@@ -47,19 +48,25 @@ trainer:
 
         # DiT Architecture: Small variant for MPS throughput
         dit_model: "DiT-S-4"
-        num_sampling_steps: "ddim25"
+        num_sampling_steps: "250"
 
-        vae: "xwen99/mar-vae-kl16"
+        # vae: "xwen99/mar-vae-kl16"
+        vae: "stabilityai/sd-vae-ft-ema"
 
         enable_nest: True
-        enable_nest_after: -1
+        enable_nest_after: 0
+        
+        prefix_loss_p: 0.3
+        prefix_loss_lambda: 0.10
+        prefix_loss_ks: [1, 2, 4, 8]
+        prefix_loss_start_epoch: 5
 
         # --- Phase 1: Bimodal Sampler Config ---
         nest_mode: "bimodal"
         nest_head_cutoff: 8
         nest_head_anchors: [1, 2, 4, 8]
-        nest_p_full: 0.50
-        nest_p_head: 0.40
+        nest_p_head: 0.55
+        nest_p_full: 0.35
         nest_p_head_late: 0.7
         nest_p_head_late_start_epoch: 10
         # ---------------------------------------

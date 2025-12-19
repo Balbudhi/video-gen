@@ -16,3 +16,4 @@ image-gen/semanticist/wandb/
 *.zip
 image-gen/semanticist/.DS_Store
 image-gen/semanticist/diff-*.txt
+image-gen/.DS_Store

@@ -362,9 +362,9 @@ class DiffuseSlot(nn.Module):
         self.num_sampling_steps = num_sampling_steps
         self.gen_diffusion = create_diffusion(timestep_respacing=num_sampling_steps)
         self.dit_input_size = (
-            enc_img_size // 8 if not "mar" in vae else enc_img_size // 16
+            enc_img_size // 8 if "mar" not in vae else enc_img_size // 16
         )
-        self.dit_in_channels = 4 if not "mar" in vae else 16
+        self.dit_in_channels = 4 if "mar" not in vae else 16
         self.dit = DiT_with_autoenc_cond_models[dit_model](
             input_size=self.dit_input_size,
             in_channels=self.dit_in_channels,

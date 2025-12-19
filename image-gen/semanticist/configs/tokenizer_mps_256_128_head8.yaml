@@ -1,7 +1,7 @@
 trainer:
   target: semanticist.engine.diffusion_trainer.DiffusionTrainer
   params:
-    num_epoch: 200
+    num_epoch: 50
     valid_size: 64
 
     # Learning Rate and Optimizer
@@ -13,15 +13,16 @@ trainer:
     # Mac-Optimized Data Loading
     batch_size: 32
     grad_accum_steps: 4
-    num_workers: 4          
+    num_workers: 0         
     pin_memory: False       # False because MPS uses Unified Memory
 
     # Precision Strategy
     precision: "bf16"
 
     enable_ema: True
-    save_every: 1000
-    sample_every: 2000       # Frequent sampling for qualitative validation
+    # overfit_batches: 1
+    save_every: 5000
+    sample_every: 200       # Frequent sampling for qualitative validation
 
     eval_fid: False
     fid_every: 999999999    # Disable FID calc (too slow locally)
@@ -54,12 +55,12 @@ trainer:
         vae: "stabilityai/sd-vae-ft-ema"
 
         enable_nest: False
-        enable_nest_after: 50
+        enable_nest_after: 15
         
         prefix_loss_p: 0.3
         prefix_loss_lambda: 0.10
         prefix_loss_ks: [1, 2, 4, 8]
-        prefix_loss_start_epoch: 50
+        prefix_loss_start_epoch: 15
 
         nest_mode: "bimodal"
         nest_head_cutoff: 8
@@ -78,7 +79,7 @@ trainer:
     dataset:
       target: semanticist.utils.datasets.ImageNet
       params:
-        root: ../datasets/looney_tunes256
+        root: /home/<username>/orcd/pool/looney_tunes256
         split: train
         aug: randcrop
         img_size: 256
@@ -86,7 +87,7 @@ trainer:
     test_dataset:
       target: semanticist.utils.datasets.ImageNet
       params:
-        root: ../datasets/looney_tunes256
+        root: /home/<username>/orcd/pool/looney_tunes256
         split: val
         aug: centercrop
         img_size: 256

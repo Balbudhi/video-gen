@@ -1,6 +1,7 @@
 import os, torch
 import os.path as osp
 import shutil
+import itertools
 from tqdm.auto import tqdm
 from einops import rearrange
 from accelerate import Accelerator
@@ -26,6 +27,22 @@ from semanticist.engine.trainer_utils import (
     create_optimizer,
 )
 from contextlib import nullcontext
+
+
+class _LenCycle:
+    """Cycle over a fixed list of batches but pretend to have a finite length (for logger)."""
+
+    def __init__(self, batches, length: int):
+        self._batches = list(batches)
+        self._length = int(length)
+
+    def __iter__(self):
+        import itertools
+
+        return itertools.cycle(self._batches)
+
+    def __len__(self):
+        return self._length
 
 
 class DiffusionTrainer:
@@ -63,6 +80,7 @@ class DiffusionTrainer:
         fid_stats=None,
         enable_ema=False,
         compile=False,
+        overfit_batches=0,
     ):
         kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
 
@@ -166,6 +184,7 @@ class DiffusionTrainer:
             )
 
             import math
+
             steps_per_epoch = math.ceil(len(self.train_dl) / grad_accum_steps)
             if warmup_epochs is not None:
                 warmup_steps = warmup_epochs * steps_per_epoch
@@ -227,6 +246,7 @@ class DiffusionTrainer:
         self.sample_every = sample_every
         self.fid_every = fid_every
         self.max_grad_norm = max_grad_norm
+        self.overfit_batches = int(overfit_batches)
 
         self.cfg = cfg
         self.test_num_slots = test_num_slots
@@ -338,8 +358,19 @@ class DiffusionTrainer:
             logger.add_meter("lr", SmoothedValue(window_size=1, fmt="{value:.6f}"))
             header = "Epoch: [{}/{}]".format(epoch, self.num_epoch)
             print_freq = 20
+
+            train_iter = self.train_dl
+            epoch_len = len(self.train_dl)
+
+            if self.overfit_batches and self.overfit_batches > 0:
+                fixed = list(
+                    itertools.islice(iter(self.train_dl), self.overfit_batches)
+                )
+                train_iter = _LenCycle(fixed, length=len(self.train_dl))
+                epoch_len = 2000000000
+
             for data_iter_step, batch in enumerate(
-                logger.log_every(self.train_dl, print_freq, header)
+                logger.log_every(train_iter, print_freq, header)
             ):
                 img, _ = batch
                 img = img.to(self.device, non_blocking=True)
@@ -397,6 +428,9 @@ class DiffusionTrainer:
                     write_dict.update(**{key: value.item()})
                 write_dict.update(lr=self.g_optim.param_groups[0]["lr"])
                 self.accelerator.log(write_dict, step=self.steps)
+
+                if self.overfit_batches and data_iter_step >= len(self.train_dl) - 1:
+                    break
 
             logger.synchronize_between_processes()
             if self.accelerator.is_main_process:

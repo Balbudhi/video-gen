@@ -90,6 +90,7 @@ class DiffusionTrainer:
         fid_every=50000,
         result_folder=None,
         log_dir="./log",
+        tracker_name="semanticist",
         cfg=3.0,
         test_num_slots=None,
         eval_fid=False,
@@ -97,6 +98,7 @@ class DiffusionTrainer:
         enable_ema=False,
         compile=False,
         overfit_batches=0,
+        only24=True,
     ):
         kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)
 
@@ -281,6 +283,8 @@ class DiffusionTrainer:
         self.fid_stats = fid_stats
 
         self.result_folder = result_folder
+        self.tracker_name = tracker_name
+        self.only24 = only24
         self.model_saved_dir, self.image_saved_dir = setup_result_folders(result_folder)
 
     @property
@@ -347,7 +351,7 @@ class DiffusionTrainer:
                 config_save_path = osp.join(self.result_folder, "config.yaml")
                 OmegaConf.save(config, config_save_path)
 
-        self.accelerator.init_trackers("semanticist")
+        self.accelerator.init_trackers(self.tracker_name)
 
         if self.test_only:
             empty_cache()
@@ -477,6 +481,8 @@ class DiffusionTrainer:
                 disable=not self.accelerator.is_main_process,
             ) as valid_dl:
                 for batch_i, batch in enumerate(valid_dl):
+                    if self.only24 and batch_i != 24:
+                        continue
                     if isinstance(batch, tuple) or isinstance(batch, list):
                         img, targets = batch[0], batch[1]
                     else:
@@ -541,6 +547,8 @@ class DiffusionTrainer:
                                         f"step_{self.steps}_cfg_{self.cfg}_slots{n_slots}_{batch_i}.jpg",
                                     ),
                                 )
+                    if self.only24:
+                        break
         if (self.eval_fid and self.test_dl is not None) and (
             self.test_only or (self.steps % self.fid_every == 0)
         ):

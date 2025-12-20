@@ -1,8 +1,8 @@
 trainer:
   target: semanticist.engine.diffusion_trainer.DiffusionTrainer
   params:
-    num_epoch: 300
-    valid_size: 1024
+    num_epoch: 1000
+    valid_size: 64  # Reduced from 1024 to save fewer sample images (~2 batches instead of ~32)
 
     blr: 2.5e-5
     cosine_lr: True
@@ -25,22 +25,24 @@ trainer:
     eval_fid: False
     fid_every: 999999999
     test_num_slots: 8
-    cfg: 1.0
+    cfg: 3.0
 
-    result_folder: "/home/eeshan/orcd/pool/image_gen_mit_preemptable"
-    log_dir: "/home/eeshan/orcd/pool/image_gen_mit_preemptable/logs"
+    result_folder: "/home/eeshan/orcd/pool/image_gen_slot32"
+    log_dir: "/home/eeshan/orcd/pool/image_gen_slot32/logs"
+    tracker_name: "semanticist_slot32"  # Unique tensorboard run name
 
     model:
       target: semanticist.stage1.diffuse_slot.DiffuseSlot
       params:
-        ckpt_path: "/home/eeshan/orcd/pool/image_gen_mit_preemptable/models/step120000"
+        ckpt_path: null  # Training from scratch (not from checkpoint)
         eval_fid: False
         encoder: "vit_base_patch16"
         enc_img_size: 256
         enc_causal: True
 
         num_slots: 128
-        slot_dim: 16
+        slot_dim: 32  # INCREASED from 16 to 32 for bigger slot representation
+
         norm_slots: True
 
         dit_model: "DiT-S-4"
@@ -48,18 +50,18 @@ trainer:
 
         vae: "stabilityai/sd-vae-ft-ema"
 
-        enable_nest: False
-        enable_nest_after: -1
+        enable_nest: True
+        enable_nest_after: 0
 
         nest_mode: "bimodal"
         nest_head_cutoff: 8
         nest_head_anchors: [1, 2, 4, 8]
-        nest_p_full: 0.30
-        nest_p_head: 0.70
+        nest_p_full: 0.40 
+        nest_p_head: 0.60 
         nest_p_head_late: null
         nest_p_head_late_start_epoch: 0
 
-        prefix_loss_p: 0.0
+        prefix_loss_p: 0.30
         prefix_loss_lambda: 0.10
         prefix_loss_ks: [1, 2, 4, 8]
         prefix_loss_start_epoch: 50
@@ -84,3 +86,4 @@ trainer:
         split: val
         aug: centercrop
         img_size: 256
+

@@ -37,5 +37,5 @@ nvidia-smi
 torchrun --nnodes=1 --nproc_per_node=4 \
   --rdzv_id=$SLURM_JOB_ID \
   --rdzv_endpoint=localhost:29500 \
-  train_net.py --cfg configs/tokenizer_cluster_a100_slot32.yaml
+  train_net.py --cfg configs/tokenizer_cluster_h200_slot32.yaml
 

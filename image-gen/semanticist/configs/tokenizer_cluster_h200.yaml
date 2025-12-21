@@ -1,7 +1,7 @@
 trainer:
   target: semanticist.engine.diffusion_trainer.DiffusionTrainer
   params:
-    num_epoch: 300
+    num_epoch: 3000
     valid_size: 1024
 
     blr: 2.5e-5
@@ -9,9 +9,9 @@ trainer:
     warmup_epochs: 5
     max_grad_norm: 1.0
 
-    batch_size: 64
+    batch_size: 128
     grad_accum_steps: 1
-    num_workers: 8
+    num_workers: 12
     pin_memory: True
 
     precision: "bf16"
@@ -19,7 +19,7 @@ trainer:
     enable_ema: True
 
     # More frequent images than checkpoints (your preference)
-    sample_every: 4000
+    sample_every: 20000
     save_every: 8000
 
     eval_fid: False
@@ -27,13 +27,13 @@ trainer:
     test_num_slots: 8
     cfg: 1.0
 
-    result_folder: "/home/eeshan/orcd/pool/image_gen_mit_preemptable"
-    log_dir: "/home/eeshan/orcd/pool/image_gen_mit_preemptable/logs"
+    result_folder: "/home/eeshan/orcd/pool/image_gen_mit_preemptable/h200_${oc.env:SLURM_JOB_ID}"
+    log_dir: "/home/eeshan/orcd/pool/image_gen_mit_preemptable/h200_${oc.env:SLURM_JOB_ID}/logs"
 
     model:
       target: semanticist.stage1.diffuse_slot.DiffuseSlot
       params:
-        ckpt_path: "/home/eeshan/orcd/pool/image_gen_mit_preemptable/models/step120000"
+        ckpt_path: "/home/eeshan/orcd/pool/image_gen_mit_preemptable/h200_7360503/models/step168000"
         eval_fid: False
         encoder: "vit_base_patch16"
         enc_img_size: 256
@@ -48,21 +48,21 @@ trainer:
 
         vae: "stabilityai/sd-vae-ft-ema"
 
-        enable_nest: False
-        enable_nest_after: -1
+        enable_nest: True
+        enable_nest_after: 0
 
         nest_mode: "bimodal"
         nest_head_cutoff: 8
         nest_head_anchors: [1, 2, 4, 8]
-        nest_p_full: 0.30
-        nest_p_head: 0.70
+        nest_p_full: 0.0
+        nest_p_head: 1.0
         nest_p_head_late: null
         nest_p_head_late_start_epoch: 0
 
-        prefix_loss_p: 0.0
+        prefix_loss_p: 0.3
         prefix_loss_lambda: 0.10
         prefix_loss_ks: [1, 2, 4, 8]
-        prefix_loss_start_epoch: 50
+        prefix_loss_start_epoch: 0
 
         tail_block_norm: True
         tail_block_norm_after: 0

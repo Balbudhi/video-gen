@@ -2,6 +2,7 @@ import os, torch
 import os.path as osp
 import shutil
 import itertools
+import torch.distributed as dist
 from tqdm.auto import tqdm
 from einops import rearrange
 from accelerate import Accelerator
@@ -27,6 +28,10 @@ from semanticist.engine.trainer_utils import (
     create_optimizer,
 )
 from contextlib import nullcontext
+
+
+def _dist_ready():
+    return dist.is_available() and dist.is_initialized()
 
 
 # -------------------------------------------------------------------------
@@ -356,7 +361,8 @@ class DiffusionTrainer:
         if self.test_only:
             empty_cache()
             self.evaluate()
-            self.accelerator.wait_for_everyone()
+            if _dist_ready():
+                self.accelerator.wait_for_everyone()
             empty_cache()
             return
 
@@ -425,8 +431,6 @@ class DiffusionTrainer:
                             self.g_sched.step_update(self.optim_steps)
                     self.g_optim.zero_grad()
 
-                self.accelerator.wait_for_everyone()
-
                 # update ema with state dict
                 if self.enable_ema:
                     # Avoid accelerator.unwrap_model() (can crash with torch.compile + accelerate)
@@ -444,7 +448,8 @@ class DiffusionTrainer:
                 ):
                     empty_cache()
                     self.evaluate()
-                    self.accelerator.wait_for_everyone()
+                    if _dist_ready():
+                        self.accelerator.wait_for_everyone()
                     empty_cache()
 
                 write_dict = dict(epoch=epoch)
@@ -466,7 +471,8 @@ class DiffusionTrainer:
             print("Train finished!")
 
     def save(self):
-        self.accelerator.wait_for_everyone()
+        if _dist_ready():
+            self.accelerator.wait_for_everyone()
         self.accelerator.save_state(
             os.path.join(self.model_saved_dir, f"step{self.steps}")
         )
@@ -627,7 +633,8 @@ class DiffusionTrainer:
 
                     total_processed += samples_in_batch
 
-                    self.accelerator.wait_for_everyone()
+                    if _dist_ready():
+                        self.accelerator.wait_for_everyone()
 
                 return torch.cat(psnr_values).mean(), torch.cat(ssim_values).mean()
 

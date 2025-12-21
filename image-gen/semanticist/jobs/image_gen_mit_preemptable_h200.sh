@@ -1,12 +1,12 @@
 #!/bin/bash
 #SBATCH -p mit_preemptable
-#SBATCH --job-name=image_gen_mit_preemptable
+#SBATCH --job-name=image_gen_mit_preemptable_h200
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=16
-#SBATCH --gres=gpu:a100:4
+#SBATCH --gres=gpu:h200:4
 #SBATCH --mem=0
-#SBATCH -t 8:00:00
+#SBATCH -t 2-00:00:00
 #SBATCH --requeue
 #SBATCH -o slurm_logs/%j/%j.out
 #SBATCH -e slurm_logs/%j/%j.err
@@ -21,6 +21,8 @@ cd /home/eeshan/video-gen/image-gen/semanticist
 
 # Make sure the job log dir exists for any extra files you might write there
 mkdir -p "slurm_logs/${SLURM_JOB_ID}"
+
+export SLURM_JOB_ID=${SLURM_JOB_ID}
 
 # HF cache on pool (persistent)
 export HF_HOME="/home/eeshan/orcd/pool/.cache/huggingface"
@@ -45,4 +47,4 @@ accelerate launch \
   --num_machines=1 \
   --machine_rank=0 \
   --main_process_port=29500 \
-  train_net.py --cfg configs/tokenizer_cluster_a100.yaml
+  train_net.py --cfg configs/tokenizer_cluster_h200.yaml
